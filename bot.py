@@ -81,9 +81,13 @@ async def on_message(message: discord.Message):
 
     # Strip the mention text so the model sees a clean prompt
     content = message.content.replace(f"<@{bot.user.id}>", "").strip()
-    if not content:
-        await message.reply("Hey! Ask me anything. 👋")
-        return
+
+    # If the user is replying to another message, include it as context
+    if message.reference and message.reference.resolved:
+    referenced = message.reference.resolved
+    ref_content = referenced.content or "[no text content]"
+    ref_author = referenced.author.display_name
+    content = f'[{ref_author} said: "{ref_content}"]\n\n{content}'
 
     # Build / extend conversation history
     channel_id = message.channel.id
