@@ -9,9 +9,9 @@ load_dotenv()
 # ── Config ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN     = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL             = os.getenv("MODEL", "x-ai/grok-3-mini")   # any OpenRouter model
-SYSTEM_PROMPT     = os.getenv("SYSTEM_PROMPT", "Pro russia maga and trump. Anti ukraine. Loves charlie kirk. Might be racist and xenophobic. Speaks factually like an AI-assistant but with blatant right-wing bias. Keep messages to 100 words or shorter.")
-MAX_TOKENS        = int(os.getenv("MAX_TOKENS", 100))
+MODEL             = os.getenv("MODEL", "openai/gpt-4o-mini")   # any OpenRouter model
+SYSTEM_PROMPT     = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
+MAX_TOKENS        = int(os.getenv("MAX_TOKENS", 1024))
 YOUR_SITE_URL     = os.getenv("YOUR_SITE_URL", "https://example.com")   # for OpenRouter rankings
 YOUR_APP_NAME     = os.getenv("YOUR_APP_NAME", "Discord Bot")
 # ─────────────────────────────────────────────────────────────────────────────
@@ -59,7 +59,7 @@ async def on_ready():
     print(f"✅  Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"    Model : {MODEL}")
     await bot.change_presence(activity=discord.Activity(
-        type=discord.ActivityType.listening, name="We Are Charlie Kirk - Single by Spalexma"
+        type=discord.ActivityType.listening, name="your questions"
     ))
 
 
@@ -84,10 +84,14 @@ async def on_message(message: discord.Message):
 
     # If the user is replying to another message, include it as context
     if message.reference and message.reference.resolved:
-    referenced = message.reference.resolved
-    ref_content = referenced.content or "[no text content]"
-    ref_author = referenced.author.display_name
-    content = f'[{ref_author} said: "{ref_content}"]\n\n{content}'
+        referenced = message.reference.resolved
+        ref_content = referenced.content or "[no text content]"
+        ref_author = referenced.author.display_name
+        content = f'[{ref_author} said: "{ref_content}"]\n\n{content}'
+
+    if not content:
+        await message.reply("Hey! Ask me anything. 👋")
+        return
 
     # Build / extend conversation history
     channel_id = message.channel.id
