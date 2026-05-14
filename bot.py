@@ -118,16 +118,12 @@ async def on_message(message: discord.Message):
         if a.content_type and a.content_type.startswith("image/")
     ]
     for attachment in image_attachments:
-        try:
-            img_b64, media_type = await fetch_image_as_base64(attachment.url)
-            user_message_content.append({
-                "type": "image_url",
-                "image_url": {
-                    "url": f"data:{media_type};base64,{img_b64}"
-                }
-            })
-        except Exception:
-            pass
+        user_message_content.append({
+        "type": "image_url",
+        "image_url": {
+            "url": attachment.url
+        }
+    })
 
     # Add text (required even with images)
     if not text_content and not image_attachments:
