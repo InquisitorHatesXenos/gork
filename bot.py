@@ -53,11 +53,21 @@ TOOLS = [
 
 
 async def web_search(query: str) -> str:
-    """Search the web using DuckDuckGo."""
+    """Search the web using DuckDuckGo with news priority."""
     try:
         with DDGS() as ddgs:
+            # Try news search first for recent events
+            news_results = list(ddgs.news(query, max_results=3))
+            if news_results:
+                return "\n\n".join(
+                    f"{r['title']} ({r['date']})\n{r['body']}"
+                    for r in news_results
+                )
+            # Fall back to regular search
             results = list(ddgs.text(query, max_results=3))
-            return "\n\n".join(f"{r['title']}\n{r['body']}" for r in results)
+            return "\n\n".join(
+                f"{r['title']}\n{r['body']}" for r in results
+            )
     except Exception as e:
         return f"Search failed: {e}"
 
