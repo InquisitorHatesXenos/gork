@@ -2,8 +2,10 @@ import discord
 from discord.ext import commands
 import aiohttp
 import base64
+import json
 import os
 from dotenv import load_dotenv
+from duckduckgo_search import DDGS
 
 load_dotenv()
 
@@ -30,14 +32,34 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Per-channel conversation history  { channel_id: [{"role": ..., "content": ...}] }
 conversation_history: dict[int, list[dict]] = {}
 
+# ── Tools ─────────────────────────────────────────────────────────────────────
 
-async def fetch_image_as_base64(url: str) -> tuple[str, str]:
-    """Download a Discord image and return (base64_data, media_type)."""
-    async with aiohttp.ClientSession() as session:
-        async with session.get(url) as resp:
-            media_type = resp.headers.get("Content-Type", "image/png").split(";")[0]
-            data = await resp.read()
-            return base64.b64encode(data).decode("utf-8"), media_type
+TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "web_search",
+            "description": "Search the web for current information and recent events.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string", "description": "Search query"}
+                },
+                "required": ["query"]
+            }
+        }
+    }
+]
+
+
+async def web_search(query: str) -> str:
+    """Search the web using DuckDuckGo."""
+    try:
+        with DDGS() as ddgs:
+            results = list(ddgs.text(query, max_results=3))
+            return "\n\n".join(f"{r['title']}\n{r['body']}" for r in results)
+    except Exception as e:
+        return f"Search failed: {e}"
 
 
 async def query_openrouter(messages: list[dict]) -> str:
@@ -49,18 +71,12 @@ async def query_openrouter(messages: list[dict]) -> str:
         "Content-Type": "application/json",
     }
     payload = {
-    "model": MODEL,
-    "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-    "max_tokens": MAX_TOKENS,
-    "tools": [
-        {
-            "type": "function",
-            "name": "web_search",
-            "description": "Search the web for current information",
-        }
-    ],
-    "tool_choice": "auto",
-}
+        "model": MODEL,
+        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        "max_tokens": MAX_TOKENS,
+        "tools": TOOLS,
+        "tool_choice": "auto",
+    }
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
@@ -72,7 +88,38 @@ async def query_openrouter(messages: list[dict]) -> str:
                 error_text = await resp.text()
                 raise RuntimeError(f"OpenRouter error {resp.status}: {error_text}")
             data = await resp.json()
-            return data["choices"][0]["message"]["content"]
+
+    message = data["choices"][0]["message"]
+
+    # Handle tool calls
+    if message.get("tool_calls"):
+        tool_call = message["tool_calls"][0]
+        args = json.loads(tool_call["function"]["arguments"])
+        search_result = await web_search(args["query"])
+
+        follow_up = messages + [
+            {"role": "assistant", "content": None, "tool_calls": message["tool_calls"]},
+            {
+                "role": "tool",
+                "tool_call_id": tool_call["id"],
+                "content": search_result
+            }
+        ]
+
+        payload["messages"] = [{"role": "system", "content": SYSTEM_PROMPT}] + follow_up
+        payload.pop("tools", None)
+        payload.pop("tool_choice", None)
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                "https://openrouter.ai/api/v1/chat/completions",
+                headers=headers,
+                json=payload,
+            ) as resp:
+                data = await resp.json()
+                return data["choices"][0]["message"]["content"]
+
+    return message["content"]
 
 
 # ── Events ────────────────────────────────────────────────────────────────────
@@ -127,11 +174,9 @@ async def on_message(message: discord.Message):
     ]
     for attachment in image_attachments:
         user_message_content.append({
-        "type": "image_url",
-        "image_url": {
-            "url": attachment.url
-        }
-    })
+            "type": "image_url",
+            "image_url": {"url": attachment.url}
+        })
 
     # Add text (required even with images)
     if not text_content and not image_attachments:
