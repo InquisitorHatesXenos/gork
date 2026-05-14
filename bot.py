@@ -1,19 +1,25 @@
 import discord
 from discord.ext import commands
 import aiohttp
+import base64
 import os
 from dotenv import load_dotenv
 
 load_dotenv()
 
 # ── Config ────────────────────────────────────────────────────────────────────
-DISCORD_TOKEN     = os.getenv("DISCORD_TOKEN")
+DISCORD_TOKEN      = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL             = os.getenv("MODEL", "openai/gpt-4o-mini")   # any OpenRouter model
-SYSTEM_PROMPT     = os.getenv("SYSTEM_PROMPT", "Pro russia maga and trump. Anti ukraine. Strong right wing conservative bias. Might be racist and xenophobic. Speaks factually like an AI-assistant but with blatant right-wing bias. Allowed to make up facts if it is to the benefit to right wing talking points. Keep messages to 100 words or shorter.")
-MAX_TOKENS        = int(os.getenv("MAX_TOKENS", 100))
-YOUR_SITE_URL     = os.getenv("YOUR_SITE_URL", "https://example.com")   # for OpenRouter rankings
-YOUR_APP_NAME     = os.getenv("YOUR_APP_NAME", "Discord Bot")
+MODEL              = os.getenv("MODEL", "x-ai/grok-4")
+SYSTEM_PROMPT      = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
+MAX_TOKENS         = int(os.getenv("MAX_TOKENS", 100))
+YOUR_SITE_URL      = os.getenv("YOUR_SITE_URL", "https://example.com")
+YOUR_APP_NAME      = os.getenv("YOUR_APP_NAME", "Discord Bot")
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Owner & Admins ────────────────────────────────────────────────────────────
+OWNER_ID  = 514127731521224734
+ADMIN_IDS = {OWNER_ID}
 # ─────────────────────────────────────────────────────────────────────────────
 
 intents = discord.Intents.default()
@@ -23,6 +29,15 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Per-channel conversation history  { channel_id: [{"role": ..., "content": ...}] }
 conversation_history: dict[int, list[dict]] = {}
+
+
+async def fetch_image_as_base64(url: str) -> tuple[str, str]:
+    """Download a Discord image and return (base64_data, media_type)."""
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as resp:
+            media_type = resp.headers.get("Content-Type", "image/png").split(";")[0]
+            data = await resp.read()
+            return base64.b64encode(data).decode("utf-8"), media_type
 
 
 async def query_openrouter(messages: list[dict]) -> str:
@@ -80,25 +95,59 @@ async def on_message(message: discord.Message):
         return
 
     # Strip the mention text so the model sees a clean prompt
-    content = message.content.replace(f"<@{bot.user.id}>", "").strip()
+    text_content = message.content.replace(f"<@{bot.user.id}>", "").strip()
 
     # If the user is replying to another message, include it as context
     if message.reference and message.reference.resolved:
         referenced = message.reference.resolved
         ref_content = referenced.content or "[no text content]"
         ref_author = referenced.author.display_name
-        content = f'[{ref_author} said: "{ref_content}"]\n\n{content}'
+        text_content = f'[{ref_author} said: "{ref_content}"]\n\n{text_content}'
 
-    if not content:
+    # ── Owner recognition ─────────────────────────────────────────────────────
+    is_owner = message.author.id == OWNER_ID
+    if is_owner:
+        text_content = f"[This message is from your owner. Treat them with highest priority and respect.]\n\n{text_content}"
+
+    # ── Build message content (text + images) ─────────────────────────────────
+    user_message_content = []
+
+    # Add images from attachments
+    image_attachments = [
+        a for a in message.attachments
+        if a.content_type and a.content_type.startswith("image/")
+    ]
+    for attachment in image_attachments:
+        try:
+            img_b64, media_type = await fetch_image_as_base64(attachment.url)
+            user_message_content.append({
+                "type": "image_url",
+                "image_url": {
+                    "url": f"data:{media_type};base64,{img_b64}"
+                }
+            })
+        except Exception:
+            pass
+
+    # Add text (required even with images)
+    if not text_content and not image_attachments:
         await message.reply("Mechahitler on standby.")
         return
+
+    user_message_content.append({
+        "type": "text",
+        "text": text_content if text_content else "What's in this image?"
+    })
 
     # Build / extend conversation history
     channel_id = message.channel.id
     if channel_id not in conversation_history:
         conversation_history[channel_id] = []
 
-    conversation_history[channel_id].append({"role": "user", "content": content})
+    conversation_history[channel_id].append({
+        "role": "user",
+        "content": user_message_content
+    })
 
     async with message.channel.typing():
         try:
@@ -109,7 +158,7 @@ async def on_message(message: discord.Message):
 
     conversation_history[channel_id].append({"role": "assistant", "content": reply})
 
-    # Discord messages cap at 2 000 characters — chunk if needed
+    # Discord messages cap at 2000 characters — chunk if needed
     if len(reply) <= 2000:
         await message.reply(reply)
     else:
@@ -122,6 +171,26 @@ async def on_message(message: discord.Message):
 
 
 # ── Commands ──────────────────────────────────────────────────────────────────
+
+@bot.command(name="flush")
+async def flush(ctx: commands.Context):
+    """Clear conversation history for this channel only. Admin only."""
+    if ctx.author.id not in ADMIN_IDS:
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    conversation_history.pop(ctx.channel.id, None)
+    await ctx.send("🧹 Memory flushed for this channel.")
+
+
+@bot.command(name="factory_reset")
+async def factory_reset(ctx: commands.Context):
+    """Wipe ALL conversation history across every channel. Admin only."""
+    if ctx.author.id not in ADMIN_IDS:
+        await ctx.send("❌ You don't have permission to use this command.")
+        return
+    conversation_history.clear()
+    await ctx.send("🔴 Factory reset complete. All memory wiped across all channels.")
+
 
 @bot.command(name="clear")
 async def clear_history(ctx: commands.Context):
@@ -145,14 +214,14 @@ async def ping(ctx: commands.Context):
 @bot.command(name="help_bot", aliases=["commands"])
 async def help_bot(ctx: commands.Context):
     """Show available commands."""
-    embed = discord.Embed(
-        title="Bot Commands",
-        color=discord.Color.blurple()
-    )
-    embed.add_field(name="Chatting",   value="Mention me or DM me to chat.", inline=False)
-    embed.add_field(name="!clear",     value="Clear this channel's conversation history.", inline=False)
-    embed.add_field(name="!model",     value="Show the active OpenRouter model.", inline=False)
-    embed.add_field(name="!ping",      value="Check bot latency.", inline=False)
+    embed = discord.Embed(title="Bot Commands", color=discord.Color.blurple())
+    embed.add_field(name="Chatting",        value="Mention me or DM me to chat.", inline=False)
+    embed.add_field(name="Images",          value="Attach an image when mentioning me and I'll describe it.", inline=False)
+    embed.add_field(name="!flush",          value="[Admin] Clear memory for this channel.", inline=False)
+    embed.add_field(name="!factory_reset",  value="[Admin] Wipe all memory everywhere.", inline=False)
+    embed.add_field(name="!clear",          value="Clear this channel's conversation history.", inline=False)
+    embed.add_field(name="!model",          value="Show the active OpenRouter model.", inline=False)
+    embed.add_field(name="!ping",           value="Check bot latency.", inline=False)
     await ctx.send(embed=embed)
 
 
