@@ -10,7 +10,7 @@ load_dotenv()
 # ── Config ────────────────────────────────────────────────────────────────────
 DISCORD_TOKEN      = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
-MODEL              = os.getenv("MODEL", "x-ai/grok-4")
+MODEL              = os.getenv("MODEL", "x-ai/grok-4.1-fast")
 SYSTEM_PROMPT      = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
 MAX_TOKENS         = int(os.getenv("MAX_TOKENS", 100))
 YOUR_SITE_URL      = os.getenv("YOUR_SITE_URL", "https://example.com")
