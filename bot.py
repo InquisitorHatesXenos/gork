@@ -49,10 +49,18 @@ async def query_openrouter(messages: list[dict]) -> str:
         "Content-Type": "application/json",
     }
     payload = {
-        "model": MODEL,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
-        "max_tokens": MAX_TOKENS,
-    }
+    "model": MODEL,
+    "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+    "max_tokens": MAX_TOKENS,
+    "tools": [
+        {
+            "type": "function",
+            "name": "web_search",
+            "description": "Search the web for current information",
+        }
+    ],
+    "tool_choice": "auto",
+}
 
     async with aiohttp.ClientSession() as session:
         async with session.post(
