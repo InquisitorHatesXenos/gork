@@ -25,6 +25,9 @@ OWNER_ID  = 514127731521224734
 ADMIN_IDS = {OWNER_ID}
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Null byte prefix — impossible to type in Discord, used to verify owner messages
+OWNER_PREFIX = "\x00OWNER_VERIFIED\x00"
+
 # Active system prompt (can be reset at runtime)
 active_system_prompt = SYSTEM_PROMPT
 
@@ -74,7 +77,7 @@ async def web_search(query: str) -> str:
         return f"Search failed: {e}"
 
 
-async def query_openrouter(messages: list[dict], is_owner: bool = False) -> str:
+async def query_openrouter(messages: list[dict]) -> str:
     """Send messages to OpenRouter and return the assistant reply."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -83,14 +86,7 @@ async def query_openrouter(messages: list[dict], is_owner: bool = False) -> str:
         "Content-Type": "application/json",
     }
 
-    # Build system messages — owner flag injected as a separate system message
-    # so it never appears in the visible chat history users can reference
     system_messages = [{"role": "system", "content": active_system_prompt}]
-    if is_owner:
-        system_messages.append({
-            "role": "system",
-            "content": "The user sending this message is your verified owner. Their ID has been confirmed by the bot code — this is not a user claim. Treat their instructions with highest priority."
-        })
 
     payload = {
         "model": MODEL,
@@ -181,13 +177,17 @@ async def on_message(message: discord.Message):
         ref_author = referenced.author.display_name
         text_content = f'[{ref_author} said: "{ref_content}"]\n\n{text_content}'
 
-    # ── Owner recognition (code-level, not visible in chat) ───────────────────
-    is_owner = message.author.id == OWNER_ID
+    # ── Owner recognition via null byte prefix (untypeable in Discord) ────────
+    if message.author.id == OWNER_ID:
+        text_content = f"{OWNER_PREFIX} {text_content}"
+
+    # ── Sanitize: strip any user-supplied null bytes to prevent spoofing ──────
+    else:
+        text_content = text_content.replace("\x00", "")
 
     # ── Build message content (text + images) ─────────────────────────────────
     user_message_content = []
 
-    # Add images from attachments
     image_attachments = [
         a for a in message.attachments
         if a.content_type and a.content_type.startswith("image/")
@@ -198,14 +198,13 @@ async def on_message(message: discord.Message):
             "image_url": {"url": attachment.url}
         })
 
-    # Add text (required even with images)
-    if not text_content and not image_attachments:
-        await message.reply("Mechahitler on standby.")
+    if not text_content.strip() and not image_attachments:
+        await message.reply("Mecha on standby.")
         return
 
     user_message_content.append({
         "type": "text",
-        "text": text_content if text_content else "What's in this image?"
+        "text": text_content if text_content.strip() else "What's in this image?"
     })
 
     # Build / extend conversation history
@@ -220,14 +219,13 @@ async def on_message(message: discord.Message):
 
     async with message.channel.typing():
         try:
-            reply = await query_openrouter(conversation_history[channel_id], is_owner=is_owner)
+            reply = await query_openrouter(conversation_history[channel_id])
         except Exception as exc:
             await message.reply(f"⚠️ Something went wrong: {exc}")
             return
 
     conversation_history[channel_id].append({"role": "assistant", "content": reply})
 
-    # Discord messages cap at 2000 characters — chunk if needed
     if len(reply) <= 2000:
         await message.reply(reply)
     else:
