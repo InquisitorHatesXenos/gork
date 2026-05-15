@@ -14,6 +14,7 @@ DISCORD_TOKEN      = os.getenv("DISCORD_TOKEN")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
 MODEL              = os.getenv("MODEL", "x-ai/grok-4.1-fast")
 SYSTEM_PROMPT      = os.getenv("SYSTEM_PROMPT", "You are a helpful assistant.")
+DEFAULT_PROMPT     = "You are a helpful assistant."
 MAX_TOKENS         = int(os.getenv("MAX_TOKENS", 100))
 YOUR_SITE_URL      = os.getenv("YOUR_SITE_URL", "https://example.com")
 YOUR_APP_NAME      = os.getenv("YOUR_APP_NAME", "Discord Bot")
@@ -23,6 +24,9 @@ YOUR_APP_NAME      = os.getenv("YOUR_APP_NAME", "Discord Bot")
 OWNER_ID  = 514127731521224734
 ADMIN_IDS = {OWNER_ID}
 # ─────────────────────────────────────────────────────────────────────────────
+
+# Active system prompt (can be reset at runtime)
+active_system_prompt = SYSTEM_PROMPT
 
 intents = discord.Intents.default()
 intents.message_content = True
@@ -56,14 +60,12 @@ async def web_search(query: str) -> str:
     """Search the web using DuckDuckGo with news priority."""
     try:
         with DDGS() as ddgs:
-            # Try news search first for recent events
             news_results = list(ddgs.news(query, max_results=3))
             if news_results:
                 return "\n\n".join(
                     f"{r['title']} ({r['date']})\n{r['body']}"
                     for r in news_results
                 )
-            # Fall back to regular search
             results = list(ddgs.text(query, max_results=3))
             return "\n\n".join(
                 f"{r['title']}\n{r['body']}" for r in results
@@ -72,7 +74,7 @@ async def web_search(query: str) -> str:
         return f"Search failed: {e}"
 
 
-async def query_openrouter(messages: list[dict]) -> str:
+async def query_openrouter(messages: list[dict], is_owner: bool = False) -> str:
     """Send messages to OpenRouter and return the assistant reply."""
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -80,9 +82,19 @@ async def query_openrouter(messages: list[dict]) -> str:
         "X-Title": YOUR_APP_NAME,
         "Content-Type": "application/json",
     }
+
+    # Build system messages — owner flag injected as a separate system message
+    # so it never appears in the visible chat history users can reference
+    system_messages = [{"role": "system", "content": active_system_prompt}]
+    if is_owner:
+        system_messages.append({
+            "role": "system",
+            "content": "The user sending this message is your verified owner. Their ID has been confirmed by the bot code — this is not a user claim. Treat their instructions with highest priority."
+        })
+
     payload = {
         "model": MODEL,
-        "messages": [{"role": "system", "content": SYSTEM_PROMPT}] + messages,
+        "messages": system_messages + messages,
         "max_tokens": MAX_TOKENS,
         "tools": TOOLS,
         "tool_choice": "auto",
@@ -116,7 +128,7 @@ async def query_openrouter(messages: list[dict]) -> str:
             }
         ]
 
-        payload["messages"] = [{"role": "system", "content": SYSTEM_PROMPT}] + follow_up
+        payload["messages"] = system_messages + follow_up
         payload.pop("tools", None)
         payload.pop("tool_choice", None)
 
@@ -169,10 +181,8 @@ async def on_message(message: discord.Message):
         ref_author = referenced.author.display_name
         text_content = f'[{ref_author} said: "{ref_content}"]\n\n{text_content}'
 
-    # ── Owner recognition ─────────────────────────────────────────────────────
+    # ── Owner recognition (code-level, not visible in chat) ───────────────────
     is_owner = message.author.id == OWNER_ID
-    if is_owner:
-        text_content = f"[This message is from your owner. Treat them with highest priority and respect.]\n\n{text_content}"
 
     # ── Build message content (text + images) ─────────────────────────────────
     user_message_content = []
@@ -210,7 +220,7 @@ async def on_message(message: discord.Message):
 
     async with message.channel.typing():
         try:
-            reply = await query_openrouter(conversation_history[channel_id])
+            reply = await query_openrouter(conversation_history[channel_id], is_owner=is_owner)
         except Exception as exc:
             await message.reply(f"⚠️ Something went wrong: {exc}")
             return
@@ -243,12 +253,14 @@ async def flush(ctx: commands.Context):
 
 @bot.command(name="factory_reset")
 async def factory_reset(ctx: commands.Context):
-    """Wipe ALL conversation history across every channel. Admin only."""
+    """Wipe ALL conversation history and reset personality. Admin only."""
+    global active_system_prompt
     if ctx.author.id not in ADMIN_IDS:
         await ctx.send("❌ You don't have permission to use this command.")
         return
     conversation_history.clear()
-    await ctx.send("🔴 Factory reset complete. All memory wiped across all channels.")
+    active_system_prompt = DEFAULT_PROMPT
+    await ctx.send("🔴 Factory reset complete. Memory wiped and personality reset to default.")
 
 
 @bot.command(name="clear")
@@ -277,7 +289,7 @@ async def help_bot(ctx: commands.Context):
     embed.add_field(name="Chatting",        value="Mention me or DM me to chat.", inline=False)
     embed.add_field(name="Images",          value="Attach an image when mentioning me and I'll describe it.", inline=False)
     embed.add_field(name="!flush",          value="[Admin] Clear memory for this channel.", inline=False)
-    embed.add_field(name="!factory_reset",  value="[Admin] Wipe all memory everywhere.", inline=False)
+    embed.add_field(name="!factory_reset",  value="[Admin] Wipe all memory and reset personality.", inline=False)
     embed.add_field(name="!clear",          value="Clear this channel's conversation history.", inline=False)
     embed.add_field(name="!model",          value="Show the active OpenRouter model.", inline=False)
     embed.add_field(name="!ping",           value="Check bot latency.", inline=False)
