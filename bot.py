@@ -136,14 +136,16 @@ async def query_openrouter(messages: list[dict]) -> str:
             ) as resp:
                 data = await resp.json()
                 msg = data["choices"][0]["message"]
-                content = msg.get("content") or msg.get("reasoning")
+                content = msg.get("content")
                 if not content:
+                    print(f"⚠️ Reasoning: {msg.get('reasoning', 'none')}")
                     print(f"⚠️ Full response: {data}")
                     content = "⚠️ No response received from the model."
                 return content
 
-    content = message.get("content") or message.get("reasoning")
+    content = message.get("content")
     if not content:
+        print(f"⚠️ Reasoning: {message.get('reasoning', 'none')}")
         print(f"⚠️ Full response: {data}")
         content = "⚠️ No response received from the model."
     return content
