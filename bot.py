@@ -38,6 +38,7 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 
 # Per-channel conversation history  { channel_id: [{"role": ..., "content": ...}] }
 conversation_history: dict[int, list[dict]] = {}
+MAX_HISTORY = 10  # max messages to keep per channel
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
@@ -216,6 +217,10 @@ async def on_message(message: discord.Message):
         "role": "user",
         "content": user_message_content
     })
+
+    # Trim to last MAX_HISTORY messages to control token usage
+    if len(conversation_history[channel_id]) > MAX_HISTORY:
+        conversation_history[channel_id] = conversation_history[channel_id][-MAX_HISTORY:]
 
     async with message.channel.typing():
         try:
