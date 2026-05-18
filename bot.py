@@ -1,5 +1,5 @@
 import discord
-from discord.ext import commands
+from discord.ext import commands, tasks
 import aiohttp
 import base64
 import json
@@ -31,6 +31,9 @@ OWNER_PREFIX = "\x00OWNER_VERIFIED\x00"
 # Active system prompt (can be reset at runtime)
 active_system_prompt = SYSTEM_PROMPT
 
+# Auto-reset interval
+PERSONALITY_RESET_HOURS = 2
+
 intents = discord.Intents.default()
 intents.message_content = True
 
@@ -39,6 +42,14 @@ bot = commands.Bot(command_prefix="!", intents=intents)
 # Per-channel conversation history  { channel_id: [{"role": ..., "content": ...}] }
 conversation_history: dict[int, list[dict]] = {}
 MAX_HISTORY = 10  # max messages to keep per channel
+
+# ── Auto-reset task ───────────────────────────────────────────────────────────
+
+@tasks.loop(hours=PERSONALITY_RESET_HOURS)
+async def auto_reset_personality():
+    global active_system_prompt
+    active_system_prompt = SYSTEM_PROMPT
+    print(f"🔄 Auto-reset personality to default system prompt.")
 
 # ── Tools ─────────────────────────────────────────────────────────────────────
 
@@ -136,9 +147,17 @@ async def query_openrouter(messages: list[dict]) -> str:
                 json=payload,
             ) as resp:
                 data = await resp.json()
-                return data["choices"][0]["message"]["content"]
+                content = data["choices"][0]["message"].get("content")
+                if not content:
+                    print(f"⚠️ Full response: {data}")
+                    content = "⚠️ No response received from the model."
+                return content
 
-    return message["content"]
+    content = message.get("content")
+    if not content:
+        print(f"⚠️ Full response: {data}")
+        content = "⚠️ No response received from the model."
+    return content
 
 
 # ── Events ────────────────────────────────────────────────────────────────────
@@ -147,6 +166,8 @@ async def query_openrouter(messages: list[dict]) -> str:
 async def on_ready():
     print(f"✅  Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"    Model : {MODEL}")
+    auto_reset_personality.start()
+    print(f"🔄 Personality auto-reset every {PERSONALITY_RESET_HOURS} hours.")
     await bot.change_presence(activity=discord.Activity(
         type=discord.ActivityType.listening, name="We Are Charlie Kirk - Spalexma"
     ))
